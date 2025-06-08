@@ -89,6 +89,7 @@ func TestStreamFromUrlWithRange(t *testing.T) {
 		} else {
 			w.Write(sourceContent)
 		}
+		fmt.Printf("Range header: %s\n", rangeHeader)
 	}))
 
 	defer mockServer.Close()

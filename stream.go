@@ -39,6 +39,48 @@ func StreamFromUrl(w http.ResponseWriter, fileUrl string, key, iv []byte) error 
 	return err
 }
 
+// func StreamFromUrlWithRange(w http.ResponseWriter, fileUrl string, key, iv []byte, byteRange string) error {
+// 	req, err := http.NewRequest("GET", fileUrl, nil)
+// 	if err != nil {
+// 		return err
+// 	}
+
+// 	if byteRange != "" {
+// 		req.Header.Set("Range", byteRange)
+// 	}
+
+// 	resp, err := http.DefaultClient.Do(req)
+// 	if err != nil {
+// 		return err
+// 	}
+// 	defer resp.Body.Close()
+
+// 	offset, err := parseRangeOffset(byteRange)
+// 	if err != nil {
+// 		return err
+// 	}
+
+// 	adjustedIV := adjustIVForOffset(iv, offset)
+
+// 	block, err := aes.NewCipher(key)
+// 	if err != nil {
+// 		return err
+// 	}
+
+// 	stream := cipher.NewCTR(block, adjustedIV)
+// 	streamReader := &cipher.StreamReader{S: stream, R: resp.Body}
+
+// 	if resp.StatusCode == http.StatusPartialContent {
+// 		w.WriteHeader(http.StatusPartialContent)
+// 	} else {
+// 		w.WriteHeader(http.StatusOK)
+// 	}
+// 	w.Header().Set("Content-Type", "application/octet-stream")
+
+// 	_, err = io.Copy(w, streamReader)
+// 	return err
+// }
+
 func StreamFromUrlWithRange(w http.ResponseWriter, fileUrl string, key, iv []byte, byteRange string) error {
 	req, err := http.NewRequest("GET", fileUrl, nil)
 	if err != nil {
@@ -55,27 +97,45 @@ func StreamFromUrlWithRange(w http.ResponseWriter, fileUrl string, key, iv []byt
 	}
 	defer resp.Body.Close()
 
+	var totalSize int64
+	if cr := resp.Header.Get("Content-Range"); cr != "" {
+		var start, end, size int64
+		_, err = fmt.Sscanf(cr, "bytes %d-%d/%d", &start, &end, &size)
+		if err == nil {
+			totalSize = size
+		}
+	} else if cl := resp.Header.Get("Content-Length"); cl != "" {
+		totalSize, _ = strconv.ParseInt(cl, 10, 64)
+	}
+
 	offset, err := parseRangeOffset(byteRange)
 	if err != nil {
 		return err
 	}
 
 	adjustedIV := adjustIVForOffset(iv, offset)
-
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return err
 	}
-
 	stream := cipher.NewCTR(block, adjustedIV)
 	streamReader := &cipher.StreamReader{S: stream, R: resp.Body}
 
-	if resp.StatusCode == http.StatusPartialContent {
+	if byteRange != "" && resp.StatusCode == http.StatusPartialContent {
+		chunkLen := resp.ContentLength
+		end := offset + chunkLen - 1
+
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, end, totalSize))
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", chunkLen))
+		w.Header().Set("Accept-Ranges", "bytes")
+		w.Header().Set("Content-Type", "application/pdf")
 		w.WriteHeader(http.StatusPartialContent)
 	} else {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", totalSize))
+		w.Header().Set("Accept-Ranges", "bytes")
+		w.Header().Set("Content-Type", "application/pdf")
 		w.WriteHeader(http.StatusOK)
 	}
-	w.Header().Set("Content-Type", "application/octet-stream")
 
 	_, err = io.Copy(w, streamReader)
 	return err
